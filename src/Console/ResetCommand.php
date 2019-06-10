@@ -54,10 +54,21 @@ class ResetCommand extends Command
     {
         $this->throwExceptionIfPlatformIsNotSupported();
 
-        $schema = $this->connection->getSchemaManager();
+        $connection = $this->connection;
+        $platformName = $connection->getDatabasePlatform()->getName();
+        $instructions = $this->getPlatformInstructions()[$platformName];
+        $schema = $connection->getSchemaManager();
+
         $tables = $schema->listTableNames();
         foreach ($tables as $table) {
-            $this->safelyDropTable($table);
+            $this->safelyDropTable($table, $instructions);
+        }
+
+        if ($instructions['dropSequences']) {
+            $sequences = $schema->listSequences();
+            foreach ($sequences as $sequence) {
+                $schema->dropSequence($sequence);
+            }
         }
     }
 
@@ -76,12 +87,9 @@ class ResetCommand extends Command
     /**
      * @param string $table
      */
-    private function safelyDropTable($table)
+    private function safelyDropTable($table, $instructions)
     {
-        $platformName = $this->connection->getDatabasePlatform()->getName();
-        $instructions = $this->getPlatformInstructions()[$platformName];
-
-        if (isset($instructions['isolation']['enable'])) {
+        if (isset($instructions['tableIsolation']['enable'])) {
             $statement = sprintf($instructions['isolation']['enable'], $table);
             $this->connection->exec($statement);
         }
@@ -89,7 +97,7 @@ class ResetCommand extends Command
         $dropStatement = sprintf($instructions['dropStatement'], $table);
         $this->connection->exec($dropStatement);
 
-        if (isset($instructions['isolation']['disable'])) {
+        if (isset($instructions['tableIsolation']['disable'])) {
             $statement = sprintf($instructions['isolation']['disable'], $table);
             $this->connection->exec($statement);
         }
@@ -102,12 +110,14 @@ class ResetCommand extends Command
     {
         return [
             'mssql' => [
+                'dropSequences' => true,
                 'tableIsolation' => [
                     'disable' => 'ALTER TABLE %s CHECK CONSTRAINT ALL',
                 ],
                 'dropStatement' => 'DROP TABLE %s',
             ],
             'mysql' => [
+                'dropSequences' => false,
                 'tableIsolation' => [
                     'enable' => 'SET FOREIGN_KEY_CHECKS = 1',
                     'disable' => 'SET FOREIGN_KEY_CHECKS = 0',
@@ -115,9 +125,11 @@ class ResetCommand extends Command
                 'dropStatement' => 'DROP TABLE %s',
             ],
             'postgresql' => [
+                'dropSequences' => true,
                 'dropStatement' => 'DROP TABLE IF EXISTS %s CASCADE',
             ],
             'sqlite' => [
+                'dropSequences' => false,
                 'tableIsolation' => [
                     'enable' => 'PRAGMA foreign_keys = ON',
                     'disable' => 'PRAGMA foreign_keys = OFF',
